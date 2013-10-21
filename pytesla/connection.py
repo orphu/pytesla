@@ -1,20 +1,39 @@
-import urllib2, urllib, re, json, sys
+import cPickle, urllib2, urllib, re, json, sys
 from vehicle import Vehicle
 
 class CookieJar:
 
-    def __init__(self):
-        self._cookies = {}
+    def __init__(self, cookiejar=None):
+        self._cookiejar = cookiejar
+        try:
+            file = open(self._cookiejar, 'rb')
+            self._cookies = cPickle.load(file)
+            file.close()
+        except:
+            self._cookies = {}
 
     def extractCookies(self, response, nameFilter = None):
         for cookie in response.headers.getheaders('Set-Cookie'):
             name, value = (cookie.split("=", 1) + [""])[:2]
             if not nameFilter or name in nameFilter:
                 self._cookies[name] = value.split(";")[0]
+        self.saveCookies()
 
 
     def addCookie(self, name, value):
         self._cookies[name] = value
+        self.saveCookies()
+
+    def delCookie(self, name):
+        if name in self._cookies:
+            del(self._cookies[name])
+        self.saveCookies()
+
+    def saveCookies(self):
+        if self._cookiejar is not None:
+            file = open(self._cookiejar, 'wb')
+            cPickle.dump(self._cookies, file)
+            file.close()
 
     def hasCookie(self, name):
         return self._cookies.has_key(name)
@@ -43,8 +62,8 @@ GHTTPCookieProcessor.http_request = GHTTPCookieProcessor.https_request
 GHTTPCookieProcessor.http_response = GHTTPCookieProcessor.https_response
 
 class Session:
-    def __init__(self):
-        self._cookies = CookieJar()
+    def __init__(self, cookiejar=None):
+        self._cookies = CookieJar(cookiejar)
 
     def read_url(self, url, post_data = None):
         """
@@ -75,15 +94,23 @@ class ErrorInvalidCredentials(Exception):
     pass
 
 class Connection(Session):
-    def __init__(self, email, passwd):
-        Session.__init__(self)
+    def __init__(self, email, passwd, cookiejar=None):
+        Session.__init__(self, cookiejar)
         self.login(email, passwd)
 
     def login(self, email, passwd):
-        self.read_url(_ENDPOINT + 'login')
-        self.read_url(_ENDPOINT + 'login', {'user_session[email]' : email, 'user_session[password]' : passwd } )
-        if not self._cookies.hasCookie('user_credentials'):
-            raise ErrorInvalidCredentials()
+        try:
+            f = self.read_url(_ENDPOINT + 'login')
+            if 'Welcome to the portal app' in f.read():
+                return
+            else:
+                raise ErrorInvalidCredentials()
+        except ErrorInvalidCredentials:
+            self._cookies.delCookie('user_credentials')
+            self._cookies.delCookie('_s_portal_session')
+            self.read_url(_ENDPOINT + 'login', {'user_session[email]' : email, 'user_session[password]' : passwd } )
+            if not self._cookies.hasCookie('user_credentials'):
+                raise ErrorInvalidCredentials()
 
     def read_json_path(self, path, post_data = None):
         return Session.read_json(self, _ENDPOINT + path, post_data)
